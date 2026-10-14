@@ -1,0 +1,228 @@
+# 🧭 Tools4AI — Architecture, Comparison & Roadmap
+
+## Table of Contents
+- [What is Tools4AI?](#what-is-tools4ai)
+- [How It Works](#how-it-works)
+- [Tools4AI vs Spring AI](#tools4ai-vs-spring-ai)
+- [Improvement Roadmap](#improvement-roadmap)
+
+---
+
+## What is Tools4AI?
+
+**Tools4AI** (v1.2.1, published on Maven Central) is a **pure Java agentic AI framework / ADK (Agent Development Kit)**.  
+Its core idea is simple and powerful: **annotate existing Java methods with `@Agent`/`@Action` and the framework automatically maps natural-language prompts to those method calls at runtime** — no manual parsing, no glue code.
+
+```java
+@Agent
+public class CookingAction {
+    @Action(description = "what food does this person like")
+    public String whatFoodDoesThisPersonLike(String name) {
+        return "Paneer Butter Masala";
+    }
+}
+
+// Somewhere else — zero plumbing:
+new OpenAiActionProcessor().processSingleAction("I don't know what to cook for Vishal");
+// → calls whatFoodDoesThisPersonLike("Vishal") automatically
+```
+
+---
+
+## How It Works
+
+| Capability | How |
+|---|---|
+| **Prompt → Java method call** | AI reads `@Action` descriptions and routes prompts to the right method, extracting typed parameters (primitives, POJOs, Lists, Maps, arrays) |
+| **Prompt → POJO** | `PromptTransformer` converts free-text directly into complex Java object graphs |
+| **Multi-LLM** | Supports Gemini (Vertex AI), OpenAI, Anthropic Claude, HuggingFace, LocalAI via LangChain4j |
+| **Multi-action type** | Java methods, HTTP REST (via `http_actions.json`), Shell scripts (via `shell_actions.yaml`), Swagger/OpenAPI endpoints, extended custom loaders |
+| **Safety & trust** | `GuardRails`, `HumanInLoop`, `ActionCallback` for progress, `ActionRisk` (LOW/MEDIUM/HIGH) for approval gates |
+| **Response validation** | Hallucination detection (`ZeroShotHallucinationDetector`), bias detection (`BiasDetector`), fact checking (`FactDetector`) |
+| **Spring integration** | `SpringGeminiProcessor`, `SpringAnthropicProcessor`, `SpringOpenAIProcessor` — plug straight into Spring beans |
+| **Protocol support** | A2A, MCP, A2UI, UCP protocols |
+| **Image actions** | `GeminiImageActionProcessor` — image-to-text, image-to-POJO, image comparison |
+| **Script actions** | Scripted multi-step action chains via `.action` files |
+| **Agent toolkit** | Composable `AIProcessor` decorators for memory, planning, orchestration, retry, rate limiting, risk gating, audit, metrics and async — see [Agent Capabilities](#2--agent-capabilities--implemented) |
+
+---
+
+## Tools4AI vs Spring AI
+
+They sound similar but solve fundamentally different problems:
+
+| Dimension | **Tools4AI** | **Spring AI** |
+|---|---|---|
+| **Core purpose** | **Agentic action routing** — maps prompts to pre-existing Java methods/REST/shell | **AI primitives** — chat, embeddings, RAG, vector stores for Spring apps |
+| **Entry point** | Annotate *any* existing Java class/method — works without Spring | Built on Spring Boot — Spring context is required |
+| **Action discovery** | Annotation-driven classpath scan + YAML/JSON config for REST/shell | Manual `@Tool` registration (since Spring AI 1.0), function callbacks |
+| **Parameter mapping** | Fully automatic — extracts typed params from prompt and populates POJOs, Lists, Maps, arrays | Manual — you define function schemas explicitly |
+| **Non-Java actions** | First-class shell scripts, Swagger/OpenAPI, HTTP REST — no code needed | Not supported natively |
+| **LLM provider** | Gemini, OpenAI, Anthropic, HuggingFace, LocalAI | Same set + Azure OpenAI, Amazon Bedrock, Ollama, Mistral, etc. |
+| **RAG / Vector stores** | Not present | Core feature (PGVector, Chroma, Pinecone, Redis, Weaviate…) |
+| **Embeddings** | Not present | Core feature |
+| **Image handling** | `GeminiImageActionProcessor` — image → POJO, compare | Multimodal in newer versions but not POJO mapping |
+| **Safety layer** | `GuardRails`, `HumanInLoop`, hallucination/bias/fact detectors | Not built in |
+| **Target user** | Enterprise Java dev wanting to AI-enable existing apps *without refactoring* | Spring Boot dev building new AI-native applications |
+| **Singleton/classpath** | Single `PredictionLoader` scans the whole classpath | Spring ApplicationContext — standard IoC |
+| **Weight** | Lightweight, single JAR | Full Spring ecosystem |
+
+> **The one-line difference:** Spring AI is a *platform* for building AI-first apps.  
+> Tools4AI is a *retrofit layer* that makes any existing Java system AI-controllable with minimal code change.
+
+---
+
+## Improvement Roadmap
+
+The items below are forward-looking ideas. **No existing code is changed** — each represents a net-new addition or extension point.
+
+### 1. 🏗️ Architecture
+
+- **`PredictionLoader` is a singleton with global mutable state** — this is the root cause of all test isolation issues and would cause problems in multi-tenant apps. A proper DI-friendly `ActionRegistry` with scope control would fix this.
+- **Classpath scanning is unbounded** — scanning the entire classpath by default is slow and fragile. Opt-in package scanning (`actionPackagesToScan`) is there but not the default.
+- **Async execution** ✅ Implemented — `com.t4a.agent.async.AsyncActionProcessor` wraps any processor and returns `CompletableFuture`s, letting independent calls overlap. Token-level *streaming* is still absent and remains a genuine gap.
+
+### 2. 🤖 Agent Capabilities ✅ Implemented
+
+The following capabilities have been added as pure extensions under the `com.t4a.agent` package.
+No existing source files were changed.
+
+| Capability | Package | Key classes |
+|---|---|---|
+| **Memory / conversation history** | `com.t4a.agent.memory` | `AgentMemory`, `InMemoryAgentMemory` (bounded sliding window), `PersistentFileAgentMemory` (JSON file, survives restarts) |
+| **Multi-agent orchestration** | `com.t4a.agent.orchestration` | `AgentOrchestrator` (LLM-driven routing + result aggregation), `AgentDefinition`, `OrchestrationResult` |
+| **ReAct planning loop** | `com.t4a.agent.planning` | `ReActPlanner` (Reason→Act→Observe loop, configurable max iterations), `ExecutionPlan`, `PlanStep` |
+| **Tool result feedback** | `com.t4a.agent.feedback` | `ToolResultFeedbackProcessor` (decorator — feeds raw tool result back to LLM for natural-language synthesis) |
+| **Retry / fallback** | `com.t4a.agent.resilience` | `RetryActionProcessor` (decorator — exponential backoff retries, optional fallback processor e.g. a different LLM provider) |
+| **Rate limiting** | `com.t4a.agent.resilience` | `RateLimitedActionProcessor` (decorator — token bucket with burst allowance), `RateLimitExceededException` |
+| **Risk gating** | `com.t4a.agent.safety` | `RiskGatedActionProcessor` (decorator — enforces the `ActionRisk` approval contract), `ActionBlockedException` |
+| **Audit trail** | `com.t4a.agent.audit` | `AuditedActionProcessor` (decorator — records every execution), `AuditTrail`, `InMemoryAuditTrail` (bounded), `JsonFileAuditTrail` (append-only JSON-lines) |
+| **Metrics** | `com.t4a.agent.metrics` | `MeteredActionProcessor` (decorator — per-operation latency and error rate), `ActionMetrics`, `InMemoryActionMetrics`, `MetricsSnapshot` |
+| **Async execution** | `com.t4a.agent.async` | `AsyncActionProcessor` (`CompletableFuture` wrapper with owned or caller-supplied executor, ordered batch fan-out) |
+
+Every decorator wraps the `AIProcessor` interface rather than a concrete provider, so they nest
+freely — see [Composing the Stack](README.md#composing-the-stack) for how ordering changes what
+each layer measures and enforces.
+
+#### Memory — quick start
+```java
+AgentMemory memory = new InMemoryAgentMemory(20);          // short-term, 20-turn window
+AgentMemory memory = new PersistentFileAgentMemory("/var/agent/session.json"); // long-term
+
+memory.addTurn("What is the weather?", "25°C");
+String prompt = memory.getHistoryAsContext() + "\nNow: what should I wear?";
+```
+
+#### Multi-agent orchestration — quick start
+```java
+AgentOrchestrator orch = new AgentOrchestrator(new OpenAiActionProcessor());
+orch.register(new AgentDefinition("flights", "handles flight booking", flightProcessor));
+orch.register(new AgentDefinition("hotels",  "handles hotel reservations", hotelProcessor));
+
+OrchestrationResult result = orch.execute(
+    "Book a flight to Bangalore on Aug 15 and a hotel for 3 nights");
+System.out.println(result.getSummary()); // LLM-synthesised answer
+```
+
+#### ReAct planning loop — quick start
+```java
+ReActPlanner planner = new ReActPlanner(new OpenAiActionProcessor()); // default 10 iterations
+ExecutionPlan plan = planner.plan("Research the best route and book the cheapest flight to Tokyo");
+plan.getSteps().forEach(step ->
+    System.out.printf("Step %d | %s → %s%n",
+        step.getStepNumber(), step.getThought(), step.getObservation()));
+System.out.println(plan.getFinalAnswer());
+```
+
+#### Tool result feedback — quick start
+```java
+// Without decorator:  processSingleAction returns the raw Java return value ("25")
+// With decorator:     processSingleAction returns "The temperature in Toronto is 25°C today."
+AIProcessor enriched = new ToolResultFeedbackProcessor(new OpenAiActionProcessor());
+String answer = (String) enriched.processSingleAction("What is the temperature in Toronto?");
+```
+
+#### Retry & fallback — quick start
+```java
+AIProcessor resilient = new RetryActionProcessor(
+        new OpenAiActionProcessor(),
+        3,                               // max attempts (including the first)
+        500,                             // initial backoff ms, doubles each retry
+        new GeminiV2ActionProcessor());  // optional fallback after retries exhaust (may be null)
+Object result = resilient.processSingleAction("Book a flight to Bangalore");
+```
+
+#### Audit trail — quick start
+```java
+AuditTrail trail = new JsonFileAuditTrail("/var/agent/audit.jsonl"); // or new InMemoryAuditTrail(100)
+AIProcessor audited = new AuditedActionProcessor(new OpenAiActionProcessor(), trail);
+
+audited.processSingleAction("Restart the payment server");
+// audit.jsonl: {"timestampMs":...,"prompt":"Restart the payment server","success":true,"durationMs":...}
+// Failures are recorded too (success=false, errorMessage) and rethrown unchanged.
+```
+
+#### Rate limiting — quick start
+```java
+AIProcessor throttled = new RateLimitedActionProcessor(
+        new OpenAiActionProcessor(),
+        5.0,     // sustained calls per second
+        10,      // burst that may accumulate while idle
+        2000);   // max wait for a permit, then RateLimitExceededException
+```
+
+#### Risk gating — quick start
+```java
+AIProcessor gated = new RiskGatedActionProcessor(
+        new OpenAiActionProcessor(),
+        onCallEngineerApprover,     // LOW: 0 approvals, MEDIUM: 1, HIGH: 2
+        securityOfficerApprover);
+
+gated.processSingleAction("Delete the customer database", dropDbAction, approver, explain);
+// → ActionBlockedException if declined; the delegate never runs
+```
+
+#### Metrics — quick start
+```java
+InMemoryActionMetrics metrics = new InMemoryActionMetrics();
+AIProcessor metered = new MeteredActionProcessor(new OpenAiActionProcessor(), metrics, "openai.");
+
+metered.processSingleAction("Book a flight to Bangalore");
+System.out.println(metrics.report());
+// openai.processSingleAction{count=1, success=1, failure=0, avgMs=812.0, minMs=812, maxMs=812}
+```
+
+#### Async execution — quick start
+```java
+try (AsyncActionProcessor async = new AsyncActionProcessor(new OpenAiActionProcessor(), 4)) {
+    CompletableFuture<Object> flight = async.processSingleActionAsync("Book a flight to Tokyo");
+    CompletableFuture<Object> hotel  = async.processSingleActionAsync("Reserve a hotel in Tokyo");
+    CompletableFuture.allOf(flight, hotel).join();
+}
+```
+
+### 3. 🔒 Safety & Observability
+
+- **`HumanInLoop` is an interface with no built-in UI** — there is no out-of-box approval UI/webhook, just the interface contract.
+- **`ActionRisk` gates** ✅ Implemented — `com.t4a.agent.safety.RiskGatedActionProcessor` enforces the documented contract (MEDIUM → one approval, HIGH → two) before the delegate runs, and raises `ActionBlockedException` on refusal. Anything not routed through the decorator is still ungated.
+- **Metrics** ✅ Implemented — `com.t4a.agent.metrics` records per-operation latency, throughput, and error rate. `InMemoryActionMetrics` is the dependency-free default; implement `ActionMetrics` to bridge to Micrometer/Prometheus/OpenTelemetry.
+- **Audit trail / action log** ✅ Implemented — `com.t4a.agent.audit` (`AuditedActionProcessor` + `JsonFileAuditTrail`) gives a persistent record of every execution: prompt, result, success/failure, duration.
+- **`GuardRails` is Gemini-only** (`GeminiGuardRails`) — OpenAI/Anthropic actions have no guard-rail implementation.
+
+### 4. 🧪 Testing & Quality
+
+- **`PredictionLoader` singleton makes unit tests fragile** — 5 tests are permanently disabled because of singleton state bleed between tests. Proper scoping or a clean reset mechanism would fix them all.
+- **No integration test harness** — the regression tests in `com.t4a.regression` all require live API keys. A contract-test / mock-LLM layer would enable true CI with no credentials.
+
+### 5. 🔌 Extensibility
+
+- **`ExtendedPredictionLoader` + `@ActivateLoader` are very powerful but underdocumented** — custom action loaders auto-discovered by annotation is a great pattern that needs more examples.
+- **Retry / fallback** ✅ Implemented — `com.t4a.agent.resilience.RetryActionProcessor` retries transient `AIProcessingException` failures with exponential backoff and optionally falls back to a second processor (e.g. another LLM provider).
+- **Rate limiting** ✅ Implemented — `com.t4a.agent.resilience.RateLimitedActionProcessor` shapes traffic with a token bucket so quota limits are respected proactively rather than handled as 429 retries.
+- **`SwaggerPredictionLoader` silently swallows parse errors** — many `catch (Exception e) { log.warn(...) }` blocks do not surface which endpoints failed to load.
+
+### 6. 🌐 Ecosystem
+
+- **No Spring Boot auto-configuration** (`spring.factories` / `@AutoConfiguration`) — Spring users have to wire it manually. A `tools4ai-spring-boot-starter` artifact would significantly drive adoption.
+- **No MCP server implementation** — the README mentions MCP protocol support but there is no MCP server/client in the codebase yet.
+- **Metrics** ✅ Implemented (see §3) — latency and error rates are collected per operation via `com.t4a.agent.metrics`. **LLM token usage is still not tracked**, because the provider processors do not surface token counts from their responses; exposing those would be the next step.
